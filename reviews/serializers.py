@@ -12,11 +12,16 @@ class ReviewSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Review
-        fields = ['id', 'user', 'station', 'text', 'sentiment', 'created_at', 'aspects']
+        fields = ['id', 'user', 'station', 'text', 'rating', 'sentiment', 'created_at', 'aspects']  # <-- include rating
 
 class StationSerializer(serializers.ModelSerializer):
-    reviews = ReviewSerializer(many=True, read_only=True)
-
     class Meta:
         model = Station
-        fields = ['id', 'name', 'line', 'location', 'reviews']
+        fields = ['id', 'name', 'line', 'location']
+
+class StatsSerializer(serializers.Serializer):
+    overallRating = serializers.FloatField()
+    totalReviews = serializers.IntegerField()
+    reviewDistribution = serializers.DictField(child=serializers.IntegerField())
+    aspects = serializers.DictField()
+    recentTrends = serializers.DictField()

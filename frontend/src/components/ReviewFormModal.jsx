@@ -1,14 +1,14 @@
 import React, { useState } from "react";
 
-const ReviewFormModal = ({ station, onClose }) => {
-  const [rating, setRating] = useState(3);
+const ReviewFormModal = ({ station, onClose, onSubmit }) => {
+  const [rating, setRating] = useState(3); // optional, not used in backend
   const [text, setText] = useState("");
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    // TODO: call API
-    console.log("Submit Review", { rating, text, station });
-    onClose();
+    if (!text.trim()) return; // don't allow empty reviews
+    onSubmit(text);
+    setText(""); // clear form
   };
 
   return (
@@ -19,23 +19,13 @@ const ReviewFormModal = ({ station, onClose }) => {
         </h2>
         <form onSubmit={handleSubmit} className="space-y-3">
           <label className="block">
-            Rating:
-            <input
-              type="number"
-              min="1"
-              max="5"
-              value={rating}
-              onChange={(e) => setRating(Number(e.target.value))}
-              className="border rounded p-2 w-full"
-            />
-          </label>
-          <label className="block">
             Review:
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
               className="border rounded p-2 w-full"
               rows={3}
+              required
             />
           </label>
           <div className="flex justify-end gap-2">

@@ -1,43 +1,60 @@
-from rest_framework import viewsets, permissions
+from rest_framework import viewsets, permissions, status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.response import Response
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from django.db.models import Avg, Count
 from .models import Station, Review, AspectRating
-from .serializers import StationSerializer, ReviewSerializer
-from .ml.absa_pipeline import ABSAPipeline   # <-- import your ABSA model pipeline
+from .serializers import StationSerializer, ReviewSerializer, StatsSerializer
+from .ml.absa_pipeline import ABSAPipeline
+from .ml.absa_pipeline import get_aspect_sentiments
+from rest_framework.permissions import AllowAny
 
 
-class StationViewSet(viewsets.ModelViewSet):
+# ---------- Station viewset ----------
+class StationViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Station.objects.all()
     serializer_class = StationSerializer
-    permission_classes = [permissions.AllowAny]
+    #authentication_classes = [JWTAuthentication]
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    #permission_classes = [permissions.IsAuthenticated]
 
-
+# ---------- Review viewset ----------
 class ReviewViewSet(viewsets.ModelViewSet):
     queryset = Review.objects.all().order_by('-created_at')
     serializer_class = ReviewSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    #authentication_classes = [JWTAuthentication]
+    #permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = []
+    permission_classes = [AllowAny]
 
     def perform_create(self, serializer):
-        """
-        Save the review and automatically analyze its sentiment using the ABSA model.
-        """
-        review = serializer.save(user=self.request.user)
+        serializer.save(user=self.request.user)
 
-        # Load ABSA model
-        pipeline = ABSAPipeline()
+# ---------- Stats endpoint ----------
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def station_stats(request, station_id):
+    reviews = Review.objects.filter(station_id=station_id)
+    total_reviews = reviews.count()
+    overall_rating = reviews.aggregate(avg=Avg('rating'))['avg'] or 0
 
-        # Predict sentiment for the review text
-        try:
-            sentiment = pipeline.predict(review.text)
-        except Exception as e:
-            sentiment = "error"
-            print(f"ABSA model error: {e}")
+    review_dist_dict = {r['rating']: r['count'] for r in reviews.values('rating').annotate(count=Count('rating'))}
 
-        # Save the overall sentiment
-        review.sentiment = sentiment
-        review.save()
+    all_texts = [r.text for r in reviews]
+    aspects = get_aspect_sentiments(all_texts)  # returns {aspect: {sentiment, percentage, trend}}
 
-        # Optional: store one aspect-level sentiment (can be extended later)
-        AspectRating.objects.create(
-            review=review,
-            aspect="overall",
-            sentiment=sentiment
-        )
+    recent_trends = {
+        "thisMonth": reviews.filter(created_at__month=request.data.get('month', 11)).count(),
+        "lastMonth": reviews.filter(created_at__month=request.data.get('month', 10)).count(),
+        "sentiment": "Positive"  # optional: compute overall sentiment
+    }
+
+    data = {
+        "overallRating": overall_rating,
+        "totalReviews": total_reviews,
+        "reviewDistribution": review_dist_dict,
+        "aspects": aspects,
+        "recentTrends": recent_trends
+    }
+    return Response(data)
