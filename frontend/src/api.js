@@ -23,15 +23,24 @@ export const loginUser = async (username, password) => {
 // ---------- Stations ----------
 export const getStations = async () => {
   const res = await axios.get(`${API_URL}/stations/`, { headers: getAuthHeaders() });
-  return res.data;
+  // DRF viewsets return paginated results, so check if it's paginated
+  return res.data.results || res.data;
 };
 
 // ---------- Reviews ----------
-export const getReviews = async (stationId) => {
-  const res = await axios.get(`${API_URL}/reviews/?station=${stationId}`, {
+export const getReviews = async (stationId, limit = null, offset = 0) => {
+  let url = `${API_URL}/reviews/?station=${stationId}`;
+  if (limit) {
+    url += `&limit=${limit}&offset=${offset}`;
+  }
+  const res = await axios.get(url, {
     headers: getAuthHeaders(),
   });
-  return res.data;
+  // Return full response object if paginated, or plain array
+  if (res.data.results !== undefined) {
+    return res.data; // Return full pagination object
+  }
+  return res.data; // Return plain array
 };
 
 export const submitReview = async (stationId, rating, text) => {

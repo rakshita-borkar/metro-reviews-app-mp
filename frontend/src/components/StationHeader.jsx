@@ -7,9 +7,9 @@ const StationHeader = ({ station, stats }) => {
       <h1 className="text-2xl font-bold">{station.name}</h1>
       <p className="text-gray-500">{station.line}</p>
       <div className="mt-2 flex items-center gap-4">
-        <StarRating rating={stats.overallRating || 0} />
+        <StarRating rating={stats.overallRating ? Number(stats.overallRating) : 0} />
         <span className="text-sm text-gray-600">
-          {stats.totalReviews} reviews
+          {stats.totalReviews || 0} reviews
         </span>
       </div>
     </div>

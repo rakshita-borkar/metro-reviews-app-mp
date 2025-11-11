@@ -30,12 +30,34 @@ absa = ABSAPipeline()
 def get_aspect_sentiments(texts, aspects=None):
     if aspects is None:
         aspects = ["Cleanliness", "Crowd", "Facilities", "Safety", "Service"]
+    
+    # Limit processing to avoid timeout - process max 50 reviews
+    # This significantly speeds up the response
+    if len(texts) > 50:
+        texts = texts[:50]
+    
     aspect_scores = defaultdict(lambda: {"Positive": 0, "Negative": 0, "Neutral": 0, "count": 0})
     for text in texts:
+        if not text or not text.strip():
+            continue
         for aspect in aspects:
-            label = absa.predict(text, aspect)
-            aspect_scores[aspect][label] += 1
-            aspect_scores[aspect]["count"] += 1
+            try:
+                label = absa.predict(text, aspect)
+                # Normalize label to match dictionary keys (capitalize first letter)
+                # Handle edge cases: "0", empty string, or unexpected labels
+                if not label or label == "0":
+                    label = "Neutral"
+                else:
+                    label = label.capitalize()
+                    # Map to expected labels
+                    if label not in ["Positive", "Negative", "Neutral"]:
+                        label = "Neutral"  # Default to Neutral for unknown labels
+                aspect_scores[aspect][label] += 1
+                aspect_scores[aspect]["count"] += 1
+            except Exception as e:
+                # If ML prediction fails, default to Neutral to avoid breaking the API
+                aspect_scores[aspect]["Neutral"] += 1
+                aspect_scores[aspect]["count"] += 1
     result = {}
     for aspect, scores in aspect_scores.items():
         total = scores["count"]
