@@ -52,6 +52,13 @@ export const submitReview = async (stationId, rating, text) => {
   return res.data;
 };
 
+export const deleteReview = async (reviewId) => {
+  const res = await axios.delete(`${API_URL}/reviews/${reviewId}/`, {
+    headers: getAuthHeaders(),
+  });
+  return res.data;
+};
+
 
 // ---------- Stats (ABSA + rating aggregation) ----------
 export const getStationStats = async (stationId) => {
@@ -59,4 +66,14 @@ export const getStationStats = async (stationId) => {
     headers: getAuthHeaders(),
   });
   return res.data;
+};
+
+export const getCurrentUser = async () => {
+  const res = await axios.get(`${API_URL}/auth/whoami/`, { headers: getAuthHeaders() });
+  // return an object with username and is_staff to allow frontend to make permission decisions
+  if (!res.data) return null;
+  return {
+    username: res.data.username || null,
+    is_staff: !!res.data.is_staff,
+  };
 };

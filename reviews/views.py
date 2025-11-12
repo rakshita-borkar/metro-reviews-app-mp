@@ -10,6 +10,15 @@ from .ml.absa_pipeline import ABSAPipeline
 from .ml.absa_pipeline import get_aspect_sentiments
 from rest_framework.permissions import AllowAny
 import threading
+from rest_framework.decorators import api_view
+
+
+@api_view(['GET'])
+def whoami(request):
+    user = request.user
+    if user and user.is_authenticated:
+        return Response({'username': user.username, 'is_staff': user.is_staff})
+    return Response({'username': None, 'is_staff': False})
 
 
 # ---------- Station viewset ----------
@@ -83,19 +92,26 @@ class ReviewViewSet(viewsets.ModelViewSet):
                 }
             )
         review = serializer.save(user=user)
-        
-        # Analyze aspects and store in database (run in background to not block response)
-        def analyze_and_store_aspects():
-            try:
-                analyze_review_aspects(review)
-            except Exception as e:
-                # Log error but don't break the review creation
-                print(f"Error analyzing aspects for review {review.id}: {e}")
-        
-        # Run analysis in background thread
-        thread = threading.Thread(target=analyze_and_store_aspects)
-        thread.daemon = True
-        thread.start()
+
+        # Analyze aspects and store in database synchronously so the client
+        # sees aspect badges and updated stats immediately after creation.
+        try:
+            analyze_review_aspects(review)
+        except Exception as e:
+            # Log error but don't break the review creation
+            print(f"Error analyzing aspects for review {review.id}: {e}")
+
+    def destroy(self, request, *args, **kwargs):
+        """Allow deletion only by the review author or staff users."""
+        instance = self.get_object()
+        # request.user may be AnonymousUser if not authenticated
+        user = request.user
+        if not user.is_authenticated:
+            return Response({'detail': 'Authentication credentials were not provided.'}, status=status.HTTP_403_FORBIDDEN)
+        # Allow if staff or owner
+        if user.is_staff or instance.user == user:
+            return super().destroy(request, *args, **kwargs)
+        return Response({'detail': 'You do not have permission to delete this review.'}, status=status.HTTP_403_FORBIDDEN)
 
 # ---------- Stats endpoint ----------
 @api_view(['GET'])
@@ -146,20 +162,21 @@ def analyze_review_aspects(review):
     """Analyze a review's aspects using ML and store results in database."""
     from .ml.absa_pipeline import absa
     
-    aspects = ["Cleanliness", "Crowd", "Facilities", "Safety", "Service"]
-    
     # Delete existing aspect ratings for this review
     AspectRating.objects.filter(review=review).delete()
     
-    # Analyze each aspect
-    for aspect in aspects:
+    # Step 1: Detect which aspects are mentioned in the review
+    detected_aspects = absa.detect_aspects(review.text)
+    
+    # Step 2: For each detected aspect, predict sentiment
+    for aspect in detected_aspects:
         try:
-            label = absa.predict(review.text, aspect)
+            label = absa.predict_aspect_sentiment(review.text, aspect)
             # Normalize label
             if not label or label == "0":
                 label = "Neutral"
             else:
-                label = label.capitalize()
+                label = str(label).strip().capitalize()
                 if label not in ["Positive", "Negative", "Neutral"]:
                     label = "Neutral"
             
@@ -183,6 +200,19 @@ def get_aspects_from_db(reviews):
     """Get aspect sentiments aggregated from database."""
     from collections import defaultdict
     
+    # Define all 9 aspects - always return all of them in consistent order
+    all_aspects = [
+        "Cleanliness",
+        "Crowd management",
+        "General Safety",
+        "Metro frequency",
+        "Metro Station Connectivity",
+        "Metro station infrastructure",
+        "Staff behavior",
+        "Ticketing system",
+        "Women's Safety"
+    ]
+    
     # Get all aspect ratings for these reviews
     aspect_ratings = AspectRating.objects.filter(review__in=reviews)
     
@@ -196,20 +226,28 @@ def get_aspects_from_db(reviews):
         aspect_scores[ar.aspect][sentiment] += 1
         aspect_scores[ar.aspect]["count"] += 1
     
-    # Format result
+    # Format result - always include all 9 aspects in consistent order
     result = {}
-    for aspect, scores in aspect_scores.items():
+    for aspect in all_aspects:
+        scores = aspect_scores[aspect]
         total = scores["count"]
+        
         if total == 0:
-            continue
-        pos_pct = int(scores["Positive"] / total * 100)
-        neg_pct = int(scores["Negative"] / total * 100)
-        neut_pct = int(scores["Neutral"] / total * 100)
-        dominant = max(["Positive", "Negative", "Neutral"], key=lambda x: scores[x])
-        result[aspect] = {
-            "sentiment": dominant,
-            "percentage": pos_pct if dominant=="Positive" else neg_pct if dominant=="Negative" else neut_pct,
-            "trend": "stable"
-        }
+            # No reviews for this aspect yet - default to Neutral with 0%
+            result[aspect] = {
+                "sentiment": "Neutral",
+                "percentage": 0,
+                "trend": "stable"
+            }
+        else:
+            pos_pct = int(scores["Positive"] / total * 100)
+            neg_pct = int(scores["Negative"] / total * 100)
+            neut_pct = 100 - pos_pct - neg_pct  # Ensure percentages add up to 100
+            dominant = max(["Positive", "Negative", "Neutral"], key=lambda x: scores[x])
+            result[aspect] = {
+                "sentiment": dominant,
+                "percentage": pos_pct if dominant == "Positive" else neg_pct if dominant == "Negative" else neut_pct,
+                "trend": "stable"
+            }
     
     return result

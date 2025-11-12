@@ -1,13 +1,13 @@
 import React, { useState } from "react";
 
-const ReviewFormModal = ({ station, onClose, onSubmit }) => {
+const ReviewFormModal = ({ station, onClose, onSubmit, submitting = false }) => {
   const [rating, setRating] = useState(3);
   const [text, setText] = useState("");
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!text.trim()) return; // don't allow empty reviews
-    onSubmit(rating, text);
+    await onSubmit(rating, text);
     setText(""); // clear form
     setRating(3); // reset rating
   };
@@ -54,9 +54,10 @@ const ReviewFormModal = ({ station, onClose, onSubmit }) => {
             </button>
             <button
               type="submit"
-              className="px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              disabled={submitting}
+              className="px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
             >
-              Submit
+              {submitting ? 'Submitting...' : 'Submit'}
             </button>
           </div>
         </form>

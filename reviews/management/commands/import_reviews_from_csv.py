@@ -5,6 +5,7 @@ from datetime import timedelta
 import csv
 import os
 import re
+import ast
 from reviews.models import Station, Review, AspectRating
 
 
@@ -52,16 +53,17 @@ class Command(BaseCommand):
 
     def map_csv_aspect_to_db_aspect(self, csv_aspect):
         """Map CSV aspect names to our database aspect names."""
+        # Map the truncated CSV column headers to the 9 standardized aspect names
         mapping = {
-            'Metro con': 'Facilities',  # Metro connectivity -> Facilities
-            'Metro stat': 'Facilities',  # Metro station -> Facilities
-            'General Sa': 'Safety',  # General safety -> Safety
-            'Crowd ma': 'Crowd',  # Crowd management -> Crowd
-            'Ticketing s': 'Service',  # Ticketing system -> Service
-            "Women's": 'Safety',  # Women's safety -> Safety
-            'Metro fre': 'Service',  # Metro frequency -> Service
-            'Staff beha': 'Service',  # Staff behavior -> Service
-            'Cleanliness': 'Cleanliness',  # Direct match
+            'Metro con': 'Metro Station Connectivity',
+            'Metro stat': 'Metro station infrastructure',
+            'General Sa': 'General Safety',
+            'Crowd ma': 'Crowd management',
+            'Ticketing s': 'Ticketing system',
+            "Women's": "Women's Safety",
+            'Metro fre': 'Metro frequency',
+            'Staff beha': 'Staff behavior',
+            'Cleanliness': 'Cleanliness',
         }
         return mapping.get(csv_aspect, None)
 
@@ -136,42 +138,85 @@ class Command(BaseCommand):
                             }
                         )
                         
-                        # Create review
-                        review = Review.objects.create(
-                            user=user,
-                            station=station,
-                            text=caption,
-                            rating=rating,
-                            created_at=created_at
-                        )
-                        
-                        # Process aspect ratings from CSV (already analyzed, just import)
-                        for csv_aspect in aspect_columns:
-                            sentiment = row.get(csv_aspect, '').strip().lower()
-                            
-                            # Skip if NA or empty
-                            if not sentiment or sentiment == 'na':
-                                continue
-                            
-                            # Map to our aspect names
-                            db_aspect = self.map_csv_aspect_to_db_aspect(csv_aspect)
-                            if not db_aspect:
-                                continue
-                            
-                            # Map sentiment
-                            if sentiment == 'positive':
-                                db_sentiment = 'Positive'
-                            elif sentiment == 'negative':
-                                db_sentiment = 'Negative'
-                            else:
-                                db_sentiment = 'Neutral'
-                            
-                            # Create aspect rating (bulk create would be faster but this is simpler)
-                            AspectRating.objects.create(
-                                review=review,
-                                aspect=db_aspect,
-                                sentiment=db_sentiment
+                        # Create review if it doesn't already exist (avoid duplicates)
+                        review = Review.objects.filter(user=user, station=station, text=caption).first()
+                        if not review:
+                            review = Review.objects.create(
+                                user=user,
+                                station=station,
+                                text=caption,
+                                rating=rating,
+                                created_at=created_at
                             )
+                        
+                        # Prefer importing from the pre-computed 'aspect_sentiment_pairs' column
+                        # which contains structures like: [["Cleanliness","positive"], ...]
+                        asp_pairs_raw = row.get('aspect_sentiment_pairs', '').strip()
+                        used_pairs = False
+                        if asp_pairs_raw and asp_pairs_raw.lower() != 'na':
+                            try:
+                                pairs = ast.literal_eval(asp_pairs_raw)
+                                if isinstance(pairs, (list, tuple)) and len(pairs) > 0:
+                                    for pair in pairs:
+                                        try:
+                                            # Expect pair like [aspect, sentiment]
+                                            aspect_name = str(pair[0]).strip()
+                                            sentiment_raw = str(pair[1]).strip().lower()
+                                            if not aspect_name:
+                                                continue
+                                            # Normalize sentiment
+                                            if sentiment_raw == 'positive':
+                                                db_sentiment = 'Positive'
+                                            elif sentiment_raw == 'negative':
+                                                db_sentiment = 'Negative'
+                                            else:
+                                                db_sentiment = 'Neutral'
+
+                                            # Create aspect rating
+                                            # Avoid duplicate aspect ratings
+                                            if not AspectRating.objects.filter(review=review, aspect=aspect_name).exists():
+                                                AspectRating.objects.create(
+                                                    review=review,
+                                                    aspect=aspect_name,
+                                                    sentiment=db_sentiment
+                                                )
+                                        except Exception:
+                                            # skip malformed pair
+                                            continue
+                                    used_pairs = True
+                            except Exception:
+                                # If parsing fails, fall back to column-based import below
+                                used_pairs = False
+
+                        # If we didn't have aspect_sentiment_pairs, fall back to the per-column import
+                        if not used_pairs:
+                            for csv_aspect in aspect_columns:
+                                sentiment = row.get(csv_aspect, '').strip().lower()
+                                
+                                # Skip if NA or empty
+                                if not sentiment or sentiment == 'na':
+                                    continue
+                                
+                                # Map to our aspect names
+                                db_aspect = self.map_csv_aspect_to_db_aspect(csv_aspect)
+                                if not db_aspect:
+                                    continue
+                                
+                                # Map sentiment
+                                if sentiment == 'positive':
+                                    db_sentiment = 'Positive'
+                                elif sentiment == 'negative':
+                                    db_sentiment = 'Negative'
+                                else:
+                                    db_sentiment = 'Neutral'
+                                
+                                # Create aspect rating (bulk create would be faster but this is simpler)
+                                if not AspectRating.objects.filter(review=review, aspect=db_aspect).exists():
+                                    AspectRating.objects.create(
+                                        review=review,
+                                        aspect=db_aspect,
+                                        sentiment=db_sentiment
+                                    )
                         
                         created_count += 1
                         
